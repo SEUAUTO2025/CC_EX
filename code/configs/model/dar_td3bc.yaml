@@ -1,0 +1,37 @@
+seed: 0
+device: cuda
+
+dataset:
+  task: Pipeline
+  history_len: 25
+  horizons: [1, 5, 10, 20]
+
+model:
+  latent_dim: 128
+  hidden_dim: 256
+  encoder: tcn
+  tcn_channels: 128
+  tcn_dilations: [1, 2, 4, 8]
+  residual_scale: 0.25
+  gate_min: 0.05
+  gate_kappa: 1.0
+
+train:
+  batch_size: 256
+  discount: 0.99
+  tau: 0.005
+  actor_lr: 0.0003
+  critic_lr: 0.0003
+  encoder_lr: 0.0003
+  behavior_lr: 0.0003
+  policy_noise: 0.2
+  noise_clip: 0.5
+  policy_delay: 2
+  total_updates: 500000
+
+loss:
+  alpha_td3bc: 2.5
+  alpha_bc: 1.0
+  alpha_res: 0.01
+  alpha_tv: 0.01
+  alpha_pred: 1.0

@@ -1,0 +1,25 @@
+DAR-TD3BC target experiment environment
+=====================================
+
+Status: planning record only; real NeoRL-2 experiments do not need to
+run on this computer.
+
+Recommended runtime:
+- Python: 3.10
+- PyTorch: CUDA-enabled build matching the selected GPU driver
+- Gymnasium / NeoRL-2: use versions required by the checked NeoRL-2 commit
+- OS: Linux is preferred for long multi-seed training runs
+- Seeds: 0, 1, 2, 3, 4 for paper-complete experiments
+- Evaluation: at least 20 episodes per checkpoint
+
+Current authoring machine snapshot:
+- Python executable: D:\Anaconda3\python.exe
+- Python version: 3.12.7
+- Platform: Windows-11-10.0.26200-SP0
+
+Required provenance to fill before submission:
+- NeoRL-2 commit SHA
+- Dataset SHA256 or Hugging Face revision
+- GPU model and CUDA version
+- Training command line for every run
+- Random seed and resolved config for every run

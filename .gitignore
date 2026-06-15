@@ -1,0 +1,28 @@
+.pytest_cache/
+__pycache__/
+*.py[cod]
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+env/
+
+# Large or generated experiment artifacts
+code/data/raw/
+code/data/processed/
+code/results/runs/
+code/results/aggregated/
+code/results/figures/
+code/results/tables/
+*.pt
+*.pth
+*.ckpt
+*.npz
+
+# LaTeX/build artifacts
+paper/template/
+paper/manuscript/*.aux
+paper/manuscript/*.log
+paper/manuscript/*.out
+paper/manuscript/*.toc
+paper/manuscript/*.pdf
