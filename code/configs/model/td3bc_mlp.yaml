@@ -1,0 +1,28 @@
+seed: 0
+device: cuda
+
+dataset:
+  task: Pipeline
+  history_len: 25
+  horizons: [1, 5, 10, 20]
+
+model:
+  hidden_dim: 256
+  latent_dim: 128
+
+train:
+  batch_size: 256
+  discount: 0.99
+  tau: 0.005
+  actor_lr: 0.0003
+  critic_lr: 0.0003
+  policy_noise: 0.2
+  noise_clip: 0.5
+  policy_delay: 2
+  total_updates: 500000
+
+loss:
+  alpha_td3bc: 2.5
+  alpha_bc: 1.0
+  alpha_res: 0.0
+  alpha_tv: 0.0

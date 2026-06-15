@@ -77,9 +77,13 @@ def assess_result_readiness(project_root: str | Path) -> list[ReadinessItem]:
                 else "Missing runnable scripts: " + ", ".join(missing_scripts)
             ),
             command=(
-                "Implement train_behavior_policy.py, pretrain_encoder.py, "
-                "train_td3bc.py, train_dar_td3bc.py, evaluate.py, and "
-                "aggregate_results.py"
+                "python -m pytest tests -q"
+                if scripts_ok
+                else (
+                    "Implement train_behavior_policy.py, pretrain_encoder.py, "
+                    "train_td3bc.py, train_dar_td3bc.py, evaluate.py, and "
+                    "aggregate_results.py"
+                )
             ),
         )
     )

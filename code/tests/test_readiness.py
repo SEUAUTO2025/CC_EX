@@ -37,6 +37,28 @@ def test_assess_result_readiness_advances_to_metadata_when_data_exists(tmp_path)
     assert "prepare_pipeline_data.py" in items[1].command
 
 
+def test_assess_result_readiness_does_not_ask_to_implement_present_scripts(tmp_path):
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    for name in (
+        "train_behavior_policy.py",
+        "pretrain_encoder.py",
+        "train_td3bc.py",
+        "train_dar_td3bc.py",
+        "evaluate.py",
+        "aggregate_results.py",
+    ):
+        (scripts / name).write_text("", encoding="utf-8")
+
+    item = next(
+        item for item in assess_result_readiness(tmp_path) if item.key == "training_scripts"
+    )
+
+    assert item.status == "ok"
+    assert "Implement" not in item.command
+    assert "pytest" in item.command
+
+
 def test_render_next_operations_is_markdown_with_blocker_status(tmp_path):
     text = render_next_operations(tmp_path)
 
