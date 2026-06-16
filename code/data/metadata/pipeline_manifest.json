@@ -1,0 +1,54 @@
+{
+  "train_path": "data\\raw\\neorl2\\pipeline_train.npz",
+  "val_path": "data\\raw\\neorl2\\pipeline_val.npz",
+  "train": {
+    "num_transitions": 100000,
+    "observation_shape": [
+      100000,
+      52
+    ],
+    "action_shape": [
+      100000,
+      1
+    ],
+    "reward_shape": [
+      100000,
+      1
+    ],
+    "next_observation_shape": [
+      100000,
+      52
+    ],
+    "reward_min": -2.2088191509246826,
+    "reward_max": 0.9999747276306152,
+    "action_min": -1.0,
+    "action_max": 1.0,
+    "episode_end_count": 100,
+    "has_nan": false
+  },
+  "val": {
+    "num_transitions": 20000,
+    "observation_shape": [
+      20000,
+      52
+    ],
+    "action_shape": [
+      20000,
+      1
+    ],
+    "reward_shape": [
+      20000,
+      1
+    ],
+    "next_observation_shape": [
+      20000,
+      52
+    ],
+    "reward_min": -2.0855414867401123,
+    "reward_max": 0.9999823570251465,
+    "action_min": -0.2670056223869324,
+    "action_max": 0.3201141655445099,
+    "episode_end_count": 20,
+    "has_nan": false
+  }
+}
