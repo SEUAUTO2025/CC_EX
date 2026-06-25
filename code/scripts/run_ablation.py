@@ -125,6 +125,7 @@ def _deep_update(target: dict, override: dict) -> None:
 
 
 def _run(command: list[str]) -> None:
+    print("Running: " + " ".join(command), flush=True)
     result = subprocess.run(
         command,
         cwd=PROJECT_ROOT,

@@ -20,6 +20,7 @@ from dar_td3bc.evaluation.control_metrics import (
 from dar_td3bc.evaluation.neorl_score import normalized_score
 from dar_td3bc.evaluation.policy import CheckpointPolicy
 from dar_td3bc.utils.device import resolve_device
+from dar_td3bc.utils.progress import progress_iter
 
 
 def evaluate_checkpoint_rollout(
@@ -56,36 +57,46 @@ def evaluate_checkpoint_rollout(
     train_seed = _checkpoint_seed(checkpoint)
     metadata = metadata or {}
 
+    eval_seeds = [int(seed) for seed in seeds]
+    jobs = [
+        (eval_seed, episode)
+        for eval_seed in eval_seeds
+        for episode in range(episodes_per_seed)
+    ]
     rows: list[dict[str, Any]] = []
-    for eval_seed in seeds:
-        for episode in range(episodes_per_seed):
-            episode_seed = int(eval_seed) * 1_000_000 + episode
-            env = env_factory()
-            try:
-                episode_metrics = _rollout_episode(
-                    policy,
-                    env,
-                    seed=episode_seed,
-                    max_steps=max_steps,
-                )
-            finally:
-                close = getattr(env, "close", None)
-                if callable(close):
-                    close()
-            for metric, value in episode_metrics.items():
-                row = {
-                    "method": method_name,
-                    "metric": metric,
-                    "value": value,
-                    "provenance": "rollout_neorl2",
-                    "checkpoint": str(checkpoint_path),
-                    "task": task,
-                    "seed": train_seed,
-                    "eval_seed": int(eval_seed),
-                    "episode": int(episode),
-                }
-                row.update(metadata)
-                rows.append(row)
+    for eval_seed, episode in progress_iter(
+        jobs,
+        desc=f"rollout {method_name}",
+        total=len(jobs),
+        enabled=True,
+    ):
+        episode_seed = int(eval_seed) * 1_000_000 + episode
+        env = env_factory()
+        try:
+            episode_metrics = _rollout_episode(
+                policy,
+                env,
+                seed=episode_seed,
+                max_steps=max_steps,
+            )
+        finally:
+            close = getattr(env, "close", None)
+            if callable(close):
+                close()
+        for metric, value in episode_metrics.items():
+            row = {
+                "method": method_name,
+                "metric": metric,
+                "value": value,
+                "provenance": "rollout_neorl2",
+                "checkpoint": str(checkpoint_path),
+                "task": task,
+                "seed": train_seed,
+                "eval_seed": int(eval_seed),
+                "episode": int(episode),
+            }
+            row.update(metadata)
+            rows.append(row)
 
     output_path = output_dir / output_name
     fieldnames = [

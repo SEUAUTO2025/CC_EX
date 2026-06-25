@@ -19,6 +19,7 @@ from dar_td3bc.data.torch_dataset import (
 from dar_td3bc.models.policies import BehaviorPolicy, MultiHorizonPredictionHead
 from dar_td3bc.models.temporal_encoder import DelayEncoder
 from dar_td3bc.utils.device import resolve_device
+from dar_td3bc.utils.progress import progress_enabled, progress_range
 from dar_td3bc.utils.run import append_csv_row, make_run_dir, should_run_interval
 from dar_td3bc.utils.seed import set_global_seed
 
@@ -58,7 +59,11 @@ def train_behavior_policy(
     )
     iterator = _cycle(loader)
     best_val = float("inf")
-    for step in range(1, steps + 1):
+    for step in progress_range(
+        steps,
+        desc=f"behavior seed={seed}",
+        enabled=progress_enabled(config),
+    ):
         batch = next(iterator).to(device, non_blocking=pin_memory)
         pred = model(batch.obs)
         loss = F.mse_loss(pred, batch.actions)
@@ -141,7 +146,11 @@ def pretrain_encoder(
     )
     iterator = _cycle(loader)
     best_val = float("inf")
-    for step in range(1, steps + 1):
+    for step in progress_range(
+        steps,
+        desc=f"encoder seed={seed}",
+        enabled=progress_enabled(config),
+    ):
         batch = next(iterator).to(device, non_blocking=pin_memory)
         parsed = split_pipeline_obs(batch.obs)
         latent = encoder(parsed.sequence, parsed.current_flow, parsed.target_flow)

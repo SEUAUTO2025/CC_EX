@@ -31,7 +31,11 @@ def main() -> int:
     config = load_yaml(args.config)
     if args.device is not None:
         config["device"] = args.device
-    train_td3bc(
+    print(
+        f"Starting TD3BC training: seed={args.seed}, steps={args.steps}, "
+        f"device={config.get('device', 'cpu')}"
+    )
+    run_dir = train_td3bc(
         train_path=args.train,
         val_path=args.val,
         config=config,
@@ -40,6 +44,7 @@ def main() -> int:
         output_root=args.output_root,
         run_name=args.run_name,
     )
+    print(f"Finished TD3BC training. Run directory: {run_dir}")
     return 0
 
 

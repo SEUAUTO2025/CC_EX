@@ -31,6 +31,7 @@ from dar_td3bc.models.policies import (
 )
 from dar_td3bc.models.temporal_encoder import DelayEncoder
 from dar_td3bc.utils.device import resolve_device
+from dar_td3bc.utils.progress import progress_enabled, progress_range
 from dar_td3bc.utils.run import append_csv_row, make_run_dir, should_run_interval
 from dar_td3bc.utils.seed import set_global_seed
 
@@ -87,7 +88,11 @@ def train_td3bc(
     )
     best_val = float("inf")
     last_actor_loss = torch.tensor(0.0, device=device)
-    for step in range(1, steps + 1):
+    for step in progress_range(
+        steps,
+        desc=f"td3bc seed={seed}",
+        enabled=progress_enabled(config),
+    ):
         batch = next(iterator).to(device, non_blocking=pin_memory)
         with torch.no_grad():
             noise = torch.randn_like(batch.actions).mul(policy_noise)
@@ -244,7 +249,11 @@ def train_dar_td3bc(
     best_val = float("inf")
     last_actor_loss = torch.tensor(0.0, device=device)
     last_gate = torch.tensor(1.0, device=device)
-    for step in range(1, steps + 1):
+    for step in progress_range(
+        steps,
+        desc=f"dar_td3bc seed={seed}",
+        enabled=progress_enabled(config),
+    ):
         batch = next(iterator).to(device, non_blocking=pin_memory)
         behavior_loss = F.mse_loss(behavior(batch.obs), batch.actions)
         behavior_optimizer.zero_grad()

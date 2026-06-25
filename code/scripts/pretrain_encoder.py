@@ -28,7 +28,11 @@ def main() -> int:
     config = load_yaml(args.config)
     if args.device is not None:
         config["device"] = args.device
-    pretrain_encoder(
+    print(
+        f"Starting encoder pretraining: seed={args.seed}, steps={args.steps}, "
+        f"device={config.get('device', 'cpu')}"
+    )
+    run_dir = pretrain_encoder(
         train_path=args.train,
         val_path=args.val,
         config=config,
@@ -37,6 +41,7 @@ def main() -> int:
         output_root=args.output_root,
         run_name=args.run_name,
     )
+    print(f"Finished encoder pretraining. Run directory: {run_dir}")
     return 0
 
 
