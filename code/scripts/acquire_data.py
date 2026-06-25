@@ -12,7 +12,6 @@ if str(SRC_ROOT) not in sys.path:
 from dar_td3bc.data.acquisition import missing_pipeline_data_request
 from dar_td3bc.data.acquisition import get_pipeline_dataset, save_dataset_npz
 
-
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--task", default="Pipeline")
@@ -34,7 +33,6 @@ def main() -> int:
     save_dataset_npz(val_data, output_dir / "pipeline_val.npz")
     print(f"Wrote Pipeline data to {output_dir}")
     return 0
-
 
 if __name__ == "__main__":
     raise SystemExit(main())

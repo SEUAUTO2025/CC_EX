@@ -42,11 +42,7 @@ _PIPELINE_BASELINES = (
 def official_pipeline_baselines(
     retrieved_date: str | None = None,
 ) -> list[dict[str, str]]:
-    """Return reported NeoRL-2 Pipeline baselines with explicit provenance.
-
-    These rows are intentionally marked as not rerun and still requiring
-    original-paper verification of table number, error-bar type, and seed count.
-    """
+    """Return official NeoRL-2 Pipeline baselines with explicit provenance."""
     checked = retrieved_date or date.today().isoformat()
     rows: list[dict[str, str]] = []
     for method, mean, error in _PIPELINE_BASELINES:
@@ -55,21 +51,85 @@ def official_pipeline_baselines(
                 "method": method,
                 "mean": str(mean),
                 "error": str(error),
-                "error_type": "unverified_error_bar",
+                "error_type": "standard_error" if error != "" else "",
                 "metric": "normalized_return",
-                "num_seeds": "",
-                "source_title": "NeoRL2: A Near Real-World Benchmark for Offline Reinforcement Learning",
+                "num_seeds": "3" if error != "" else "",
+                "source_title": (
+                    "NeoRL-2: Near Real-World Benchmarks for Offline "
+                    "Reinforcement Learning with Extended Realistic Scenarios"
+                ),
                 "source_url": "https://arxiv.org/abs/2503.19267",
-                "source_table": "TODO_verify_original_table",
-                "source_commit": "",
+                "source_table": "Table 2",
+                "source_commit": "polixir/NeoRL2 main benchmark/task_score.csv",
                 "retrieved_date": checked,
                 "provenance": "reported_not_rerun",
                 "notes": (
-                    "Seeded from local project plan; verify against the "
-                    "original paper before manuscript use."
+                    "Official NeoRL-2 reported Pipeline normalized score; "
+                    "error column is standard error over three random seeds."
                 ),
             }
         )
+    return rows
+
+
+def reported_pipeline_followups(
+    retrieved_date: str | None = None,
+) -> list[dict[str, str]]:
+    """Return later reported Pipeline scores that use NeoRL-2 normalized score."""
+    checked = retrieved_date or date.today().isoformat()
+    rows = [
+        {
+            "method": "PIQL",
+            "mean": "89.3",
+            "error": "14.8",
+            "error_type": "reported_dispersion",
+            "metric": "normalized_return",
+            "num_seeds": "",
+            "source_title": (
+                "PIQL: Projective Implicit Q-Learning with Support Constraint "
+                "for Offline Reinforcement Learning"
+            ),
+            "source_url": "https://arxiv.org/abs/2501.08907",
+            "source_table": "Table 3",
+            "source_commit": "",
+            "retrieved_date": checked,
+            "provenance": "reported_not_rerun",
+            "notes": "NeoRL2 Pipeline normalized score reported by follow-up paper.",
+        },
+        {
+            "method": "ACPO",
+            "mean": "95.2",
+            "error": "4.62",
+            "error_type": "standard_deviation",
+            "metric": "normalized_return",
+            "num_seeds": "3",
+            "source_title": (
+                "Automatic Constraint Policy Optimization based on Continuous "
+                "Constraint Interpolation Framework for Offline Reinforcement Learning"
+            ),
+            "source_url": "https://arxiv.org/abs/2601.23010",
+            "source_table": "Table 3",
+            "source_commit": "",
+            "retrieved_date": checked,
+            "provenance": "reported_not_rerun",
+            "notes": "NeoRL2 Pipeline normalized score reported by follow-up paper.",
+        },
+        {
+            "method": "TD3PA",
+            "mean": "82.31",
+            "error": "",
+            "error_type": "",
+            "metric": "normalized_return",
+            "num_seeds": "3",
+            "source_title": "Pessimistic Auxiliary Policy for Offline Reinforcement Learning",
+            "source_url": "https://arxiv.org/abs/2602.23974",
+            "source_table": "Table II",
+            "source_commit": "",
+            "retrieved_date": checked,
+            "provenance": "reported_not_rerun",
+            "notes": "NeoRL-2 Pipeline normalized score reported by follow-up paper.",
+        },
+    ]
     return rows
 
 

@@ -38,3 +38,9 @@ def append_csv_row(path: str | Path, row: dict[str, Any]) -> None:
         if not exists:
             writer.writeheader()
         writer.writerow(row)
+
+
+def should_run_interval(step: int, *, total_steps: int, interval: int) -> bool:
+    if interval <= 0:
+        raise ValueError("interval must be positive")
+    return step == 1 or step == total_steps or step % interval == 0

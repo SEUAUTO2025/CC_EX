@@ -9,6 +9,8 @@ description = "Delay-aware residual TD3+BC research code for NeoRL-2 Pipeline."
 requires-python = ">=3.10"
 dependencies = [
   "numpy",
+  "pandas",
+  "scipy",
   "torch",
   "pyyaml",
 ]

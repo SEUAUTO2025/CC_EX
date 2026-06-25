@@ -40,3 +40,11 @@ def test_import_reported_baselines_script_runs_from_checkout(tmp_path):
 
     assert result.returncode == 0, result.stderr
     assert "reported_not_rerun" in output.read_text(encoding="utf-8")
+
+
+def test_experiment_driver_scripts_expose_help():
+    for script in ("evaluate_rollout.py", "run_ablation.py", "run_robustness.py"):
+        result = _run_script(script, "--help")
+
+        assert result.returncode == 0, result.stderr
+        assert "usage:" in result.stdout

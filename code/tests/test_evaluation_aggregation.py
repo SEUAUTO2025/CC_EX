@@ -98,6 +98,41 @@ def test_aggregate_run_metrics_writes_final_summary(tmp_path):
     assert (tmp_path / "agg" / "main_results.tex").exists()
 
 
+def test_aggregate_run_metrics_includes_rollout_metrics_and_paired_tests(tmp_path):
+    run_root = tmp_path / "runs"
+    for method, values in {
+        "td3bc_mlp": [(0, 70.0), (1, 72.0)],
+        "dar_td3bc": [(0, 80.0), (1, 84.0)],
+    }.items():
+        for seed, value in values:
+            run_dir = run_root / method / f"seed_{seed}"
+            run_dir.mkdir(parents=True)
+            (run_dir / "metrics_rollout.csv").write_text(
+                "method,metric,value,provenance,checkpoint,task,seed,episode\n"
+                f"{method},normalized_score,{value},rollout_neorl2,ckpt,Pipeline,{seed},0\n",
+                encoding="utf-8",
+            )
+
+    output_dir = aggregate_run_metrics(run_root=run_root, output_dir=tmp_path / "agg")
+
+    complete = pd.read_csv(output_dir / "complete_results.csv")
+    summary = pd.read_csv(output_dir / "final_summary.csv")
+    paired = pd.read_csv(output_dir / "paired_tests.csv")
+
+    assert set(complete["provenance"]) == {"rollout_neorl2"}
+    dar_score = summary[
+        (summary["method"] == "dar_td3bc")
+        & (summary["metric"] == "normalized_score")
+    ].iloc[0]
+    assert dar_score["n"] == 2
+    assert dar_score["mean"] == 82.0
+    assert not paired.empty
+    assert paired.loc[0, "metric"] == "normalized_score"
+    assert paired.loc[0, "method_a"] == "dar_td3bc"
+    assert paired.loc[0, "method_b"] == "td3bc_mlp"
+    assert paired.loc[0, "test"] == "paired_t"
+
+
 def test_evaluate_and_aggregate_scripts_run(tmp_path):
     train = tmp_path / "train.npz"
     val = tmp_path / "val.npz"

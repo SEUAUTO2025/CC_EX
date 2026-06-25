@@ -17,6 +17,7 @@ def main() -> int:
     parser.add_argument("--checkpoint", required=True)
     parser.add_argument("--val", default="data/raw/neorl2/pipeline_val.npz")
     parser.add_argument("--method", default=None)
+    parser.add_argument("--device", default=None)
     parser.add_argument("--output-dir", default=None)
     args = parser.parse_args()
 
@@ -27,6 +28,7 @@ def main() -> int:
         val_path=args.val,
         output_dir=output_dir,
         method=args.method,
+        device=args.device,
     )
     print(f"Wrote {output_path}")
     return 0

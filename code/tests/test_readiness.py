@@ -59,6 +59,47 @@ def test_assess_result_readiness_does_not_ask_to_implement_present_scripts(tmp_p
     assert "pytest" in item.command
 
 
+def test_assess_result_readiness_requires_rollout_normalized_scores(tmp_path):
+    raw = tmp_path / "data" / "raw" / "neorl2"
+    raw.mkdir(parents=True)
+    np.savez_compressed(raw / "pipeline_train.npz", observations=np.zeros((1, 52)))
+    np.savez_compressed(raw / "pipeline_val.npz", observations=np.zeros((1, 52)))
+    metadata = tmp_path / "data" / "metadata"
+    metadata.mkdir(parents=True)
+    (metadata / "pipeline_manifest.json").write_text("{}", encoding="utf-8")
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    for name in (
+        "train_behavior_policy.py",
+        "pretrain_encoder.py",
+        "train_td3bc.py",
+        "train_dar_td3bc.py",
+        "evaluate.py",
+        "aggregate_results.py",
+        "evaluate_rollout.py",
+        "run_ablation.py",
+        "run_robustness.py",
+    ):
+        (scripts / name).write_text("", encoding="utf-8")
+    aggregated = tmp_path / "results" / "aggregated"
+    aggregated.mkdir(parents=True)
+    (aggregated / "complete_results.csv").write_text(
+        "method,metric,value,provenance\n"
+        "td3bc_mlp,offline_action_mse,0.1,offline_validation_npz\n",
+        encoding="utf-8",
+    )
+
+    item = next(
+        item
+        for item in assess_result_readiness(tmp_path)
+        if item.key == "paper_grade_results"
+    )
+
+    assert item.status == "missing"
+    assert "normalized_score" in item.message
+    assert "evaluate_rollout.py" in item.command
+
+
 def test_render_next_operations_is_markdown_with_blocker_status(tmp_path):
     text = render_next_operations(tmp_path)
 

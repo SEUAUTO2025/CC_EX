@@ -18,7 +18,8 @@ from dar_td3bc.data.torch_dataset import (
 )
 from dar_td3bc.models.policies import BehaviorPolicy, MultiHorizonPredictionHead
 from dar_td3bc.models.temporal_encoder import DelayEncoder
-from dar_td3bc.utils.run import append_csv_row, make_run_dir
+from dar_td3bc.utils.device import resolve_device
+from dar_td3bc.utils.run import append_csv_row, make_run_dir, should_run_interval
 from dar_td3bc.utils.seed import set_global_seed
 
 
@@ -35,50 +36,58 @@ def train_behavior_policy(
     set_global_seed(seed)
     train_arrays = PipelineArrays.from_npz(train_path)
     val_arrays = PipelineArrays.from_npz(val_path)
-    batch_size = int(config.get("train", {}).get("batch_size", 256))
-    lr = float(config.get("train", {}).get("behavior_lr", 3e-4))
+    device = resolve_device(config)
+    train_cfg = config.get("train", {})
+    batch_size = int(train_cfg.get("batch_size", 256))
+    lr = float(train_cfg.get("behavior_lr", 3e-4))
+    log_interval = int(train_cfg.get("log_interval", 100))
+    validation_interval = int(train_cfg.get("validation_interval", 1000))
     hidden_dim = int(config.get("model", {}).get("hidden_dim", 256))
     run_dir = make_run_dir(output_root, "behavior_policy", seed, run_name=run_name)
     _write_config(run_dir, config, seed, steps)
 
-    model = BehaviorPolicy(input_dim=52, hidden_dim=hidden_dim)
+    model = BehaviorPolicy(input_dim=52, hidden_dim=hidden_dim).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    pin_memory = device.type == "cuda"
     loader = DataLoader(
         PipelineTransitionDataset(train_arrays),
         batch_size=batch_size,
         shuffle=True,
         collate_fn=collate_transition_batch,
+        pin_memory=pin_memory,
     )
     iterator = _cycle(loader)
     best_val = float("inf")
     for step in range(1, steps + 1):
-        batch = next(iterator)
+        batch = next(iterator).to(device, non_blocking=pin_memory)
         pred = model(batch.obs)
         loss = F.mse_loss(pred, batch.actions)
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
-        append_csv_row(
-            run_dir / "metrics_train.csv",
-            {"step": step, "loss_bc": float(loss.detach().cpu())},
-        )
-        val_loss = _behavior_val_loss(model, val_arrays, batch_size)
-        append_csv_row(
-            run_dir / "metrics_validation.csv",
-            {"step": step, "loss_bc": val_loss},
-        )
-        if val_loss <= best_val:
-            best_val = val_loss
-            torch.save(
-                {
-                    "model": model.state_dict(),
-                    "seed": seed,
-                    "config": config,
-                    "step": step,
-                    "val_loss": val_loss,
-                },
-                run_dir / "checkpoint_best.pt",
+        if should_run_interval(step, total_steps=steps, interval=log_interval):
+            append_csv_row(
+                run_dir / "metrics_train.csv",
+                {"step": step, "loss_bc": float(loss.detach().cpu())},
             )
+        if should_run_interval(step, total_steps=steps, interval=validation_interval):
+            val_loss = _behavior_val_loss(model, val_arrays, batch_size)
+            append_csv_row(
+                run_dir / "metrics_validation.csv",
+                {"step": step, "loss_bc": val_loss},
+            )
+            if val_loss <= best_val:
+                best_val = val_loss
+                torch.save(
+                    {
+                        "model": model.state_dict(),
+                        "seed": seed,
+                        "config": config,
+                        "step": step,
+                        "val_loss": val_loss,
+                    },
+                    run_dir / "checkpoint_best.pt",
+                )
     torch.save({"model": model.state_dict(), "seed": seed, "config": config}, run_dir / "checkpoint_last.pt")
     return run_dir
 
@@ -96,12 +105,15 @@ def pretrain_encoder(
     set_global_seed(seed)
     train_arrays = PipelineArrays.from_npz(train_path)
     val_arrays = PipelineArrays.from_npz(val_path)
+    device = resolve_device(config)
     dataset_cfg = config.get("dataset", {})
     model_cfg = config.get("model", {})
     train_cfg = config.get("train", {})
     horizons = tuple(int(v) for v in dataset_cfg.get("horizons", [1, 5, 10, 20]))
     batch_size = int(train_cfg.get("batch_size", 256))
     lr = float(train_cfg.get("encoder_lr", 3e-4))
+    log_interval = int(train_cfg.get("log_interval", 100))
+    validation_interval = int(train_cfg.get("validation_interval", 1000))
     hidden_dim = int(model_cfg.get("hidden_dim", 256))
     latent_dim = int(model_cfg.get("latent_dim", 128))
     dilations = tuple(int(v) for v in model_cfg.get("tcn_dilations", [1, 2, 4, 8]))
@@ -112,21 +124,25 @@ def pretrain_encoder(
         hidden_dim=hidden_dim,
         latent_dim=latent_dim,
         dilations=dilations,
+    ).to(device)
+    head = MultiHorizonPredictionHead(latent_dim=latent_dim, horizons=horizons).to(
+        device
     )
-    head = MultiHorizonPredictionHead(latent_dim=latent_dim, horizons=horizons)
     optimizer = torch.optim.Adam(
         list(encoder.parameters()) + list(head.parameters()), lr=lr
     )
+    pin_memory = device.type == "cuda"
     loader = DataLoader(
         PipelineTransitionDataset(train_arrays, horizons=horizons),
         batch_size=batch_size,
         shuffle=True,
         collate_fn=collate_transition_batch,
+        pin_memory=pin_memory,
     )
     iterator = _cycle(loader)
     best_val = float("inf")
     for step in range(1, steps + 1):
-        batch = next(iterator)
+        batch = next(iterator).to(device, non_blocking=pin_memory)
         parsed = split_pipeline_obs(batch.obs)
         latent = encoder(parsed.sequence, parsed.current_flow, parsed.target_flow)
         pred = head(latent)
@@ -134,28 +150,30 @@ def pretrain_encoder(
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
-        append_csv_row(
-            run_dir / "metrics_train.csv",
-            {"step": step, "loss_pred": float(loss.detach().cpu())},
-        )
-        val_loss = _encoder_val_loss(encoder, head, val_arrays, horizons, batch_size)
-        append_csv_row(
-            run_dir / "metrics_validation.csv",
-            {"step": step, "loss_pred": val_loss},
-        )
-        if val_loss <= best_val:
-            best_val = val_loss
-            torch.save(
-                {
-                    "encoder": encoder.state_dict(),
-                    "prediction_head": head.state_dict(),
-                    "seed": seed,
-                    "config": config,
-                    "step": step,
-                    "val_loss": val_loss,
-                },
-                run_dir / "checkpoint_best.pt",
+        if should_run_interval(step, total_steps=steps, interval=log_interval):
+            append_csv_row(
+                run_dir / "metrics_train.csv",
+                {"step": step, "loss_pred": float(loss.detach().cpu())},
             )
+        if should_run_interval(step, total_steps=steps, interval=validation_interval):
+            val_loss = _encoder_val_loss(encoder, head, val_arrays, horizons, batch_size)
+            append_csv_row(
+                run_dir / "metrics_validation.csv",
+                {"step": step, "loss_pred": val_loss},
+            )
+            if val_loss <= best_val:
+                best_val = val_loss
+                torch.save(
+                    {
+                        "encoder": encoder.state_dict(),
+                        "prediction_head": head.state_dict(),
+                        "seed": seed,
+                        "config": config,
+                        "step": step,
+                        "val_loss": val_loss,
+                    },
+                    run_dir / "checkpoint_best.pt",
+                )
     torch.save(
         {
             "encoder": encoder.state_dict(),
@@ -179,12 +197,16 @@ def _behavior_val_loss(
     model: BehaviorPolicy, arrays: PipelineArrays, batch_size: int
 ) -> float:
     model.eval()
+    device = next(model.parameters()).device
+    pin_memory = device.type == "cuda"
     losses = []
     for batch in DataLoader(
         PipelineTransitionDataset(arrays),
         batch_size=batch_size,
         collate_fn=collate_transition_batch,
+        pin_memory=pin_memory,
     ):
+        batch = batch.to(device, non_blocking=pin_memory)
         losses.append(F.mse_loss(model(batch.obs), batch.actions).item())
     model.train()
     return float(sum(losses) / max(len(losses), 1))
@@ -200,12 +222,16 @@ def _encoder_val_loss(
 ) -> float:
     encoder.eval()
     head.eval()
+    device = next(encoder.parameters()).device
+    pin_memory = device.type == "cuda"
     losses = []
     for batch in DataLoader(
         PipelineTransitionDataset(arrays, horizons=horizons),
         batch_size=batch_size,
         collate_fn=collate_transition_batch,
+        pin_memory=pin_memory,
     ):
+        batch = batch.to(device, non_blocking=pin_memory)
         parsed = split_pipeline_obs(batch.obs)
         latent = encoder(parsed.sequence, parsed.current_flow, parsed.target_flow)
         pred = head(latent)

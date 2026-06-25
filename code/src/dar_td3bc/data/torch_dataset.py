@@ -20,6 +20,25 @@ class TransitionBatch:
     future_flows: torch.Tensor
     future_mask: torch.Tensor
 
+    def to(
+        self,
+        device: torch.device | str,
+        *,
+        non_blocking: bool = False,
+    ) -> "TransitionBatch":
+        return TransitionBatch(
+            obs=self.obs.to(device, non_blocking=non_blocking),
+            actions=self.actions.to(device, non_blocking=non_blocking),
+            rewards=self.rewards.to(device, non_blocking=non_blocking),
+            next_obs=self.next_obs.to(device, non_blocking=non_blocking),
+            dones=self.dones.to(device, non_blocking=non_blocking),
+            previous_actions=self.previous_actions.to(
+                device, non_blocking=non_blocking
+            ),
+            future_flows=self.future_flows.to(device, non_blocking=non_blocking),
+            future_mask=self.future_mask.to(device, non_blocking=non_blocking),
+        )
+
 
 class PipelineTransitionDataset(Dataset[TransitionBatch]):
     def __init__(

@@ -30,7 +30,8 @@ from dar_td3bc.models.policies import (
     compose_residual_action,
 )
 from dar_td3bc.models.temporal_encoder import DelayEncoder
-from dar_td3bc.utils.run import append_csv_row, make_run_dir
+from dar_td3bc.utils.device import resolve_device
+from dar_td3bc.utils.run import append_csv_row, make_run_dir, should_run_interval
 from dar_td3bc.utils.seed import set_global_seed
 
 
@@ -47,6 +48,7 @@ def train_td3bc(
     set_global_seed(seed)
     train_arrays = PipelineArrays.from_npz(train_path)
     val_arrays = PipelineArrays.from_npz(val_path)
+    device = resolve_device(config)
     train_cfg = config.get("train", {})
     model_cfg = config.get("model", {})
     loss_cfg = config.get("loss", {})
@@ -57,12 +59,14 @@ def train_td3bc(
     policy_noise = float(train_cfg.get("policy_noise", 0.2))
     noise_clip = float(train_cfg.get("noise_clip", 0.5))
     policy_delay = int(train_cfg.get("policy_delay", 2))
+    log_interval = int(train_cfg.get("log_interval", 100))
+    validation_interval = int(train_cfg.get("validation_interval", 1000))
 
     run_dir = make_run_dir(output_root, "td3bc_mlp", seed, run_name=run_name)
     _write_config(run_dir, config, seed, steps)
 
-    actor = BehaviorPolicy(input_dim=52, hidden_dim=hidden_dim)
-    critic = TwinCritic(latent_dim=52, hidden_dim=hidden_dim)
+    actor = BehaviorPolicy(input_dim=52, hidden_dim=hidden_dim).to(device)
+    critic = TwinCritic(latent_dim=52, hidden_dim=hidden_dim).to(device)
     target_actor = copy.deepcopy(actor)
     target_critic = copy.deepcopy(critic)
     actor_optimizer = torch.optim.Adam(
@@ -72,11 +76,19 @@ def train_td3bc(
         critic.parameters(), lr=float(train_cfg.get("critic_lr", 3e-4))
     )
 
-    iterator = _cycle(_loader(train_arrays, batch_size=batch_size, shuffle=True))
+    pin_memory = device.type == "cuda"
+    iterator = _cycle(
+        _loader(
+            train_arrays,
+            batch_size=batch_size,
+            shuffle=True,
+            pin_memory=pin_memory,
+        )
+    )
     best_val = float("inf")
-    last_actor_loss = torch.tensor(0.0)
+    last_actor_loss = torch.tensor(0.0, device=device)
     for step in range(1, steps + 1):
-        batch = next(iterator)
+        batch = next(iterator).to(device, non_blocking=pin_memory)
         with torch.no_grad():
             noise = torch.randn_like(batch.actions).mul(policy_noise)
             noise = noise.clamp(-noise_clip, noise_clip)
@@ -113,25 +125,36 @@ def train_td3bc(
             soft_update(critic, target_critic, tau)
             last_actor_loss = actor_components.total.detach()
 
-        append_csv_row(
-            run_dir / "metrics_train.csv",
-            {
-                "step": step,
-                "loss_critic": float(critic_loss.detach().cpu()),
-                "loss_actor": float(last_actor_loss.cpu()),
-            },
-        )
-        val_loss = _td3bc_val_loss(actor, val_arrays, batch_size)
-        append_csv_row(
-            run_dir / "metrics_validation.csv",
-            {"step": step, "loss_bc": val_loss},
-        )
-        if val_loss <= best_val:
-            best_val = val_loss
-            torch.save(
-                _td3bc_checkpoint(actor, critic, target_actor, target_critic, config, seed, step, val_loss),
-                run_dir / "checkpoint_best.pt",
+        if should_run_interval(step, total_steps=steps, interval=log_interval):
+            append_csv_row(
+                run_dir / "metrics_train.csv",
+                {
+                    "step": step,
+                    "loss_critic": float(critic_loss.detach().cpu()),
+                    "loss_actor": float(last_actor_loss.cpu()),
+                },
             )
+        if should_run_interval(step, total_steps=steps, interval=validation_interval):
+            val_loss = _td3bc_val_loss(actor, val_arrays, batch_size)
+            append_csv_row(
+                run_dir / "metrics_validation.csv",
+                {"step": step, "loss_bc": val_loss},
+            )
+            if val_loss <= best_val:
+                best_val = val_loss
+                torch.save(
+                    _td3bc_checkpoint(
+                        actor,
+                        critic,
+                        target_actor,
+                        target_critic,
+                        config,
+                        seed,
+                        step,
+                        val_loss,
+                    ),
+                    run_dir / "checkpoint_best.pt",
+                )
 
     torch.save(
         _td3bc_checkpoint(actor, critic, target_actor, target_critic, config, seed, steps, best_val),
@@ -153,6 +176,7 @@ def train_dar_td3bc(
     set_global_seed(seed)
     train_arrays = PipelineArrays.from_npz(train_path)
     val_arrays = PipelineArrays.from_npz(val_path)
+    device = resolve_device(config)
     dataset_cfg = config.get("dataset", {})
     train_cfg = config.get("train", {})
     model_cfg = config.get("model", {})
@@ -167,9 +191,12 @@ def train_dar_td3bc(
     policy_noise = float(train_cfg.get("policy_noise", 0.2))
     noise_clip = float(train_cfg.get("noise_clip", 0.5))
     policy_delay = int(train_cfg.get("policy_delay", 2))
+    log_interval = int(train_cfg.get("log_interval", 100))
+    validation_interval = int(train_cfg.get("validation_interval", 1000))
     residual_scale = float(model_cfg.get("residual_scale", 0.25))
     gate_min = float(model_cfg.get("gate_min", 0.05))
     gate_kappa = float(model_cfg.get("gate_kappa", 1.0))
+    alpha_pred = float(loss_cfg.get("alpha_pred", 1.0))
 
     run_dir = make_run_dir(output_root, "dar_td3bc", seed, run_name=run_name)
     _write_config(run_dir, config, seed, steps)
@@ -183,6 +210,8 @@ def train_dar_td3bc(
     )
     actor = ResidualActor(latent_dim=latent_dim, hidden_dim=hidden_dim)
     critic = TwinCritic(latent_dim=latent_dim, hidden_dim=hidden_dim)
+    for model in (behavior, encoder, prediction_head, actor, critic):
+        model.to(device)
     target_behavior = copy.deepcopy(behavior)
     target_encoder = copy.deepcopy(encoder)
     target_actor = copy.deepcopy(actor)
@@ -202,16 +231,21 @@ def train_dar_td3bc(
         critic.parameters(), lr=float(train_cfg.get("critic_lr", 3e-4))
     )
 
+    pin_memory = device.type == "cuda"
     iterator = _cycle(
         _loader(
-            train_arrays, batch_size=batch_size, shuffle=True, horizons=horizons
+            train_arrays,
+            batch_size=batch_size,
+            shuffle=True,
+            horizons=horizons,
+            pin_memory=pin_memory,
         )
     )
     best_val = float("inf")
-    last_actor_loss = torch.tensor(0.0)
-    last_gate = torch.tensor(1.0)
+    last_actor_loss = torch.tensor(0.0, device=device)
+    last_gate = torch.tensor(1.0, device=device)
     for step in range(1, steps + 1):
-        batch = next(iterator)
+        batch = next(iterator).to(device, non_blocking=pin_memory)
         behavior_loss = F.mse_loss(behavior(batch.obs), batch.actions)
         behavior_optimizer.zero_grad()
         behavior_loss.backward()
@@ -220,7 +254,8 @@ def train_dar_td3bc(
         parsed = split_pipeline_obs(batch.obs)
         latent = encoder(parsed.sequence, parsed.current_flow, parsed.target_flow)
         pred = prediction_head(latent)
-        pred_loss = masked_prediction_loss(pred, batch.future_flows, batch.future_mask)
+        pred_loss_raw = masked_prediction_loss(pred, batch.future_flows, batch.future_mask)
+        pred_loss = alpha_pred * pred_loss_raw
         representation_optimizer.zero_grad()
         pred_loss.backward()
         representation_optimizer.step()
@@ -321,49 +356,54 @@ def train_dar_td3bc(
             last_actor_loss = actor_components.total.detach()
             last_gate = gate.mean().detach()
 
-        append_csv_row(
-            run_dir / "metrics_train.csv",
-            {
-                "step": step,
-                "loss_behavior": float(behavior_loss.detach().cpu()),
-                "loss_pred": float(pred_loss.detach().cpu()),
-                "loss_critic": float(critic_loss.detach().cpu()),
-                "loss_actor": float(last_actor_loss.cpu()),
-                "gate_mean": float(last_gate.cpu()),
-            },
-        )
-        val_loss = _dar_val_loss(
-            behavior,
-            encoder,
-            prediction_head,
-            val_arrays,
-            horizons,
-            batch_size,
-        )
-        append_csv_row(
-            run_dir / "metrics_validation.csv",
-            {"step": step, "loss_validation": val_loss},
-        )
-        if val_loss <= best_val:
-            best_val = val_loss
-            torch.save(
-                _dar_checkpoint(
-                    behavior,
-                    encoder,
-                    prediction_head,
-                    actor,
-                    critic,
-                    target_behavior,
-                    target_encoder,
-                    target_actor,
-                    target_critic,
-                    config,
-                    seed,
-                    step,
-                    val_loss,
-                ),
-                run_dir / "checkpoint_best.pt",
+        if should_run_interval(step, total_steps=steps, interval=log_interval):
+            append_csv_row(
+                run_dir / "metrics_train.csv",
+                {
+                    "step": step,
+                    "loss_behavior": float(behavior_loss.detach().cpu()),
+                    "loss_pred": float(pred_loss.detach().cpu()),
+                    "loss_pred_raw": float(pred_loss_raw.detach().cpu()),
+                    "alpha_pred": alpha_pred,
+                    "loss_critic": float(critic_loss.detach().cpu()),
+                    "loss_actor": float(last_actor_loss.cpu()),
+                    "gate_mean": float(last_gate.cpu()),
+                },
             )
+        if should_run_interval(step, total_steps=steps, interval=validation_interval):
+            val_loss = _dar_val_loss(
+                behavior,
+                encoder,
+                prediction_head,
+                val_arrays,
+                horizons,
+                batch_size,
+                alpha_pred=alpha_pred,
+            )
+            append_csv_row(
+                run_dir / "metrics_validation.csv",
+                {"step": step, "loss_validation": val_loss},
+            )
+            if val_loss <= best_val:
+                best_val = val_loss
+                torch.save(
+                    _dar_checkpoint(
+                        behavior,
+                        encoder,
+                        prediction_head,
+                        actor,
+                        critic,
+                        target_behavior,
+                        target_encoder,
+                        target_actor,
+                        target_critic,
+                        config,
+                        seed,
+                        step,
+                        val_loss,
+                    ),
+                    run_dir / "checkpoint_best.pt",
+                )
 
     torch.save(
         _dar_checkpoint(
@@ -392,12 +432,14 @@ def _loader(
     batch_size: int,
     shuffle: bool,
     horizons: tuple[int, ...] = (1, 5, 10, 20),
+    pin_memory: bool = False,
 ) -> DataLoader:
     return DataLoader(
         PipelineTransitionDataset(arrays, horizons=horizons),
         batch_size=batch_size,
         shuffle=shuffle,
         collate_fn=collate_transition_batch,
+        pin_memory=pin_memory,
     )
 
 
@@ -412,8 +454,13 @@ def _td3bc_val_loss(
     actor: BehaviorPolicy, arrays: PipelineArrays, batch_size: int
 ) -> float:
     actor.eval()
+    device = next(actor.parameters()).device
+    pin_memory = device.type == "cuda"
     losses = []
-    for batch in _loader(arrays, batch_size=batch_size, shuffle=False):
+    for batch in _loader(
+        arrays, batch_size=batch_size, shuffle=False, pin_memory=pin_memory
+    ):
+        batch = batch.to(device, non_blocking=pin_memory)
         losses.append(F.mse_loss(actor(batch.obs), batch.actions).item())
     actor.train()
     return float(sum(losses) / max(len(losses), 1))
@@ -427,21 +474,29 @@ def _dar_val_loss(
     arrays: PipelineArrays,
     horizons: tuple[int, ...],
     batch_size: int,
+    alpha_pred: float = 1.0,
 ) -> float:
     behavior.eval()
     encoder.eval()
     prediction_head.eval()
+    device = next(encoder.parameters()).device
+    pin_memory = device.type == "cuda"
     losses = []
     for batch in _loader(
-        arrays, batch_size=batch_size, shuffle=False, horizons=horizons
+        arrays,
+        batch_size=batch_size,
+        shuffle=False,
+        horizons=horizons,
+        pin_memory=pin_memory,
     ):
+        batch = batch.to(device, non_blocking=pin_memory)
         parsed = split_pipeline_obs(batch.obs)
         latent = encoder(parsed.sequence, parsed.current_flow, parsed.target_flow)
         behavior_loss = F.mse_loss(behavior(batch.obs), batch.actions)
         pred_loss = masked_prediction_loss(
             prediction_head(latent), batch.future_flows, batch.future_mask
         )
-        losses.append((behavior_loss + pred_loss).item())
+        losses.append((behavior_loss + alpha_pred * pred_loss).item())
     behavior.train()
     encoder.train()
     prediction_head.train()
