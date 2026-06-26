@@ -7,15 +7,11 @@ import json
 
 import torch
 import torch.nn.functional as F
-from torch.utils.data import DataLoader
 
 from dar_td3bc.algorithms.td3bc import masked_prediction_loss
+from dar_td3bc.data.fast_batch import FastTransitionBatches
 from dar_td3bc.data.pipeline_dataset import PipelineArrays
 from dar_td3bc.data.pipeline_obs import split_pipeline_obs
-from dar_td3bc.data.torch_dataset import (
-    PipelineTransitionDataset,
-    collate_transition_batch,
-)
 from dar_td3bc.models.policies import BehaviorPolicy, MultiHorizonPredictionHead
 from dar_td3bc.models.temporal_encoder import DelayEncoder
 from dar_td3bc.utils.device import resolve_device
@@ -39,7 +35,7 @@ def train_behavior_policy(
     val_arrays = PipelineArrays.from_npz(val_path)
     device = resolve_device(config)
     train_cfg = config.get("train", {})
-    batch_size = int(train_cfg.get("batch_size", 256))
+    batch_size = int(train_cfg.get("batch_size", 1024))
     lr = float(train_cfg.get("behavior_lr", 3e-4))
     log_interval = int(train_cfg.get("log_interval", 100))
     validation_interval = int(train_cfg.get("validation_interval", 1000))
@@ -49,22 +45,14 @@ def train_behavior_policy(
 
     model = BehaviorPolicy(input_dim=52, hidden_dim=hidden_dim).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-    pin_memory = device.type == "cuda"
-    loader = DataLoader(
-        PipelineTransitionDataset(train_arrays),
-        batch_size=batch_size,
-        shuffle=True,
-        collate_fn=collate_transition_batch,
-        pin_memory=pin_memory,
-    )
-    iterator = _cycle(loader)
+    train_batches = FastTransitionBatches(train_arrays, device=device)
     best_val = float("inf")
     for step in progress_range(
         steps,
         desc=f"behavior seed={seed}",
         enabled=progress_enabled(config),
     ):
-        batch = next(iterator).to(device, non_blocking=pin_memory)
+        batch = train_batches.sample(batch_size)
         pred = model(batch.obs)
         loss = F.mse_loss(pred, batch.actions)
         optimizer.zero_grad()
@@ -115,7 +103,7 @@ def pretrain_encoder(
     model_cfg = config.get("model", {})
     train_cfg = config.get("train", {})
     horizons = tuple(int(v) for v in dataset_cfg.get("horizons", [1, 5, 10, 20]))
-    batch_size = int(train_cfg.get("batch_size", 256))
+    batch_size = int(train_cfg.get("batch_size", 1024))
     lr = float(train_cfg.get("encoder_lr", 3e-4))
     log_interval = int(train_cfg.get("log_interval", 100))
     validation_interval = int(train_cfg.get("validation_interval", 1000))
@@ -136,22 +124,18 @@ def pretrain_encoder(
     optimizer = torch.optim.Adam(
         list(encoder.parameters()) + list(head.parameters()), lr=lr
     )
-    pin_memory = device.type == "cuda"
-    loader = DataLoader(
-        PipelineTransitionDataset(train_arrays, horizons=horizons),
-        batch_size=batch_size,
-        shuffle=True,
-        collate_fn=collate_transition_batch,
-        pin_memory=pin_memory,
+    train_batches = FastTransitionBatches(
+        train_arrays,
+        horizons=horizons,
+        device=device,
     )
-    iterator = _cycle(loader)
     best_val = float("inf")
     for step in progress_range(
         steps,
         desc=f"encoder seed={seed}",
         enabled=progress_enabled(config),
     ):
-        batch = next(iterator).to(device, non_blocking=pin_memory)
+        batch = train_batches.sample(batch_size)
         parsed = split_pipeline_obs(batch.obs)
         latent = encoder(parsed.sequence, parsed.current_flow, parsed.target_flow)
         pred = head(latent)
@@ -195,27 +179,15 @@ def pretrain_encoder(
     return run_dir
 
 
-def _cycle(loader: DataLoader):
-    while True:
-        for batch in loader:
-            yield batch
-
-
 @torch.no_grad()
 def _behavior_val_loss(
     model: BehaviorPolicy, arrays: PipelineArrays, batch_size: int
 ) -> float:
     model.eval()
     device = next(model.parameters()).device
-    pin_memory = device.type == "cuda"
+    batches = FastTransitionBatches(arrays, device=device)
     losses = []
-    for batch in DataLoader(
-        PipelineTransitionDataset(arrays),
-        batch_size=batch_size,
-        collate_fn=collate_transition_batch,
-        pin_memory=pin_memory,
-    ):
-        batch = batch.to(device, non_blocking=pin_memory)
+    for batch in batches.iter_batches(batch_size=batch_size, shuffle=False):
         losses.append(F.mse_loss(model(batch.obs), batch.actions).item())
     model.train()
     return float(sum(losses) / max(len(losses), 1))
@@ -232,15 +204,9 @@ def _encoder_val_loss(
     encoder.eval()
     head.eval()
     device = next(encoder.parameters()).device
-    pin_memory = device.type == "cuda"
+    batches = FastTransitionBatches(arrays, horizons=horizons, device=device)
     losses = []
-    for batch in DataLoader(
-        PipelineTransitionDataset(arrays, horizons=horizons),
-        batch_size=batch_size,
-        collate_fn=collate_transition_batch,
-        pin_memory=pin_memory,
-    ):
-        batch = batch.to(device, non_blocking=pin_memory)
+    for batch in batches.iter_batches(batch_size=batch_size, shuffle=False):
         parsed = split_pipeline_obs(batch.obs)
         latent = encoder(parsed.sequence, parsed.current_flow, parsed.target_flow)
         pred = head(latent)

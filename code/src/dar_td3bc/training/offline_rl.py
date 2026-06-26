@@ -8,7 +8,6 @@ import json
 
 import torch
 import torch.nn.functional as F
-from torch.utils.data import DataLoader
 
 from dar_td3bc.algorithms.td3bc import (
     masked_prediction_loss,
@@ -17,11 +16,7 @@ from dar_td3bc.algorithms.td3bc import (
 )
 from dar_td3bc.data.pipeline_dataset import PipelineArrays
 from dar_td3bc.data.pipeline_obs import split_pipeline_obs
-from dar_td3bc.data.torch_dataset import (
-    PipelineTransitionDataset,
-    TransitionBatch,
-    collate_transition_batch,
-)
+from dar_td3bc.data.fast_batch import FastTransitionBatches
 from dar_td3bc.models.critic import TwinCritic, critic_disagreement_gate
 from dar_td3bc.models.policies import (
     BehaviorPolicy,
@@ -53,7 +48,7 @@ def train_td3bc(
     train_cfg = config.get("train", {})
     model_cfg = config.get("model", {})
     loss_cfg = config.get("loss", {})
-    batch_size = int(train_cfg.get("batch_size", 256))
+    batch_size = int(train_cfg.get("batch_size", 1024))
     hidden_dim = int(model_cfg.get("hidden_dim", 256))
     discount = float(train_cfg.get("discount", 0.99))
     tau = float(train_cfg.get("tau", 0.005))
@@ -77,15 +72,7 @@ def train_td3bc(
         critic.parameters(), lr=float(train_cfg.get("critic_lr", 3e-4))
     )
 
-    pin_memory = device.type == "cuda"
-    iterator = _cycle(
-        _loader(
-            train_arrays,
-            batch_size=batch_size,
-            shuffle=True,
-            pin_memory=pin_memory,
-        )
-    )
+    train_batches = FastTransitionBatches(train_arrays, device=device)
     best_val = float("inf")
     last_actor_loss = torch.tensor(0.0, device=device)
     for step in progress_range(
@@ -93,7 +80,7 @@ def train_td3bc(
         desc=f"td3bc seed={seed}",
         enabled=progress_enabled(config),
     ):
-        batch = next(iterator).to(device, non_blocking=pin_memory)
+        batch = train_batches.sample(batch_size)
         with torch.no_grad():
             noise = torch.randn_like(batch.actions).mul(policy_noise)
             noise = noise.clamp(-noise_clip, noise_clip)
@@ -187,7 +174,7 @@ def train_dar_td3bc(
     model_cfg = config.get("model", {})
     loss_cfg = config.get("loss", {})
     horizons = tuple(int(v) for v in dataset_cfg.get("horizons", [1, 5, 10, 20]))
-    batch_size = int(train_cfg.get("batch_size", 256))
+    batch_size = int(train_cfg.get("batch_size", 1024))
     hidden_dim = int(model_cfg.get("hidden_dim", 256))
     latent_dim = int(model_cfg.get("latent_dim", 128))
     dilations = tuple(int(v) for v in model_cfg.get("tcn_dilations", [1, 2, 4, 8]))
@@ -236,15 +223,10 @@ def train_dar_td3bc(
         critic.parameters(), lr=float(train_cfg.get("critic_lr", 3e-4))
     )
 
-    pin_memory = device.type == "cuda"
-    iterator = _cycle(
-        _loader(
-            train_arrays,
-            batch_size=batch_size,
-            shuffle=True,
-            horizons=horizons,
-            pin_memory=pin_memory,
-        )
+    train_batches = FastTransitionBatches(
+        train_arrays,
+        horizons=horizons,
+        device=device,
     )
     best_val = float("inf")
     last_actor_loss = torch.tensor(0.0, device=device)
@@ -254,7 +236,7 @@ def train_dar_td3bc(
         desc=f"dar_td3bc seed={seed}",
         enabled=progress_enabled(config),
     ):
-        batch = next(iterator).to(device, non_blocking=pin_memory)
+        batch = train_batches.sample(batch_size)
         behavior_loss = F.mse_loss(behavior(batch.obs), batch.actions)
         behavior_optimizer.zero_grad()
         behavior_loss.backward()
@@ -435,41 +417,15 @@ def train_dar_td3bc(
     return run_dir
 
 
-def _loader(
-    arrays: PipelineArrays,
-    *,
-    batch_size: int,
-    shuffle: bool,
-    horizons: tuple[int, ...] = (1, 5, 10, 20),
-    pin_memory: bool = False,
-) -> DataLoader:
-    return DataLoader(
-        PipelineTransitionDataset(arrays, horizons=horizons),
-        batch_size=batch_size,
-        shuffle=shuffle,
-        collate_fn=collate_transition_batch,
-        pin_memory=pin_memory,
-    )
-
-
-def _cycle(loader: DataLoader):
-    while True:
-        for batch in loader:
-            yield batch
-
-
 @torch.no_grad()
 def _td3bc_val_loss(
     actor: BehaviorPolicy, arrays: PipelineArrays, batch_size: int
 ) -> float:
     actor.eval()
     device = next(actor.parameters()).device
-    pin_memory = device.type == "cuda"
+    batches = FastTransitionBatches(arrays, device=device)
     losses = []
-    for batch in _loader(
-        arrays, batch_size=batch_size, shuffle=False, pin_memory=pin_memory
-    ):
-        batch = batch.to(device, non_blocking=pin_memory)
+    for batch in batches.iter_batches(batch_size=batch_size, shuffle=False):
         losses.append(F.mse_loss(actor(batch.obs), batch.actions).item())
     actor.train()
     return float(sum(losses) / max(len(losses), 1))
@@ -489,16 +445,9 @@ def _dar_val_loss(
     encoder.eval()
     prediction_head.eval()
     device = next(encoder.parameters()).device
-    pin_memory = device.type == "cuda"
+    batches = FastTransitionBatches(arrays, horizons=horizons, device=device)
     losses = []
-    for batch in _loader(
-        arrays,
-        batch_size=batch_size,
-        shuffle=False,
-        horizons=horizons,
-        pin_memory=pin_memory,
-    ):
-        batch = batch.to(device, non_blocking=pin_memory)
+    for batch in batches.iter_batches(batch_size=batch_size, shuffle=False):
         parsed = split_pipeline_obs(batch.obs)
         latent = encoder(parsed.sequence, parsed.current_flow, parsed.target_flow)
         behavior_loss = F.mse_loss(behavior(batch.obs), batch.actions)
