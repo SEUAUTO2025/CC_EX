@@ -1,6 +1,6 @@
 ---
 name: rl-training-code-quality
-description: Use when writing or modifying reinforcement learning or machine learning training code, especially CUDA/GPU training, offline replay-buffer sampling, long-running optimization loops, rollout evaluation, ablation studies, robustness studies, or multi-seed experiment scripts. Enforces progress reporting, GPU-aware data loading, and parallel seed execution by default.
+description: Use when writing or modifying reinforcement learning or machine learning training code, especially CUDA/GPU training, offline replay-buffer sampling, long-running optimization loops, interrupted runs, rollout evaluation, ablation studies, robustness studies, or multi-seed experiment scripts.
 ---
 
 # RL Training Code Quality
@@ -25,6 +25,17 @@ Use this skill to make training code observable, GPU-efficient, and ready for mu
 - Prefer preloaded contiguous tensors, GPU-resident batch sampling, vectorized index selection, pinned memory, and non-blocking host-to-device transfer where appropriate.
 - Do not increase batch size blindly. First check whether the bottleneck is CPU sampling, environment rollout, synchronization, or model compute.
 - Log the resolved device and effective batch size before training begins.
+
+### Checkpointing And Resume
+
+- Long-running training entry points should support checkpoint resume by default, unless the user explicitly asks for throwaway code.
+- Expose a clear resume interface such as `--resume` plus the existing run name, seed, and output root, and optionally `--resume-from` for an explicit checkpoint path.
+- For multi-seed runs, allow a subset of seeds to resume from their deterministic run directories without rerunning completed seeds.
+- Save enough state to continue training correctly: model weights, target or EMA weights, optimizer states, scheduler states, gradient scaler state, RNG states, current step or epoch, best validation metric, resolved config, and seed.
+- Resume should continue to the requested final total step or epoch, not add that many extra steps on top of the checkpoint.
+- Prefer a latest checkpoint for recovery and a best checkpoint for evaluation; write checkpoints atomically where practical to avoid corrupt files after interruption.
+- Keep backward compatibility with older checkpoints where possible. If optimizer or scheduler state is unavailable, load model state, warn clearly, and continue from fresh optimizer state only when that is acceptable for the experiment.
+- Log the checkpoint path, restored step or epoch, target total step or epoch, and whether optimizer/scheduler/scaler/RNG state was restored.
 
 ### Multi-Seed Execution
 
@@ -53,7 +64,9 @@ Use this pattern for full experiment drivers:
 ## Verification Checklist
 
 - Add tests that script `--help` exposes `--seeds` and `--max-workers`.
+- Add tests that training scripts expose resume options and can continue from a saved checkpoint to a larger final step or epoch.
 - Add tests for the parallel command runner covering all-success and one-failure cases.
+- Add tests that checkpoints include optimizer, scheduler, scaler, RNG, and progress counters when those components exist.
 - Add tests for batch sampler output shape, dtype, and device behavior.
 - Smoke-test training on a tiny step count when data is available.
 - Parse-check shell or PowerShell experiment scripts before committing.
