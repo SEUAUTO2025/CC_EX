@@ -10,6 +10,7 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 from dar_td3bc.training.supervised import train_behavior_policy
+from dar_td3bc.utils.parallel import run_parallel_commands
 from dar_td3bc.utils.run import load_yaml
 
 
@@ -19,12 +20,44 @@ def main() -> int:
     parser.add_argument("--train", default="data/raw/neorl2/pipeline_train.npz")
     parser.add_argument("--val", default="data/raw/neorl2/pipeline_val.npz")
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--seeds", type=int, nargs="+", default=None)
+    parser.add_argument("--max-workers", type=int, default=None)
     parser.add_argument("--steps", type=int, default=1000)
     parser.add_argument("--device", default=None)
     parser.add_argument("--output-root", default="results/runs")
     parser.add_argument("--run-name", default=None)
     args = parser.parse_args()
 
+    if args.seeds:
+        commands = []
+        for seed in args.seeds:
+            command = [
+                sys.executable,
+                str(Path(__file__).resolve()),
+                "--config",
+                args.config,
+                "--train",
+                args.train,
+                "--val",
+                args.val,
+                "--seed",
+                str(seed),
+                "--steps",
+                str(args.steps),
+                "--output-root",
+                args.output_root,
+            ]
+            if args.run_name is not None:
+                command.extend(["--run-name", args.run_name])
+            if args.device is not None:
+                command.extend(["--device", args.device])
+            commands.append(command)
+        return run_parallel_commands(
+            commands,
+            max_workers=args.max_workers,
+            label="behavior seed",
+            cwd=PROJECT_ROOT,
+        )
     config = load_yaml(args.config)
     if args.device is not None:
         config["device"] = args.device

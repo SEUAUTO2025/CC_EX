@@ -2,13 +2,17 @@ from __future__ import annotations
 
 import argparse
 import copy
-import subprocess
 import sys
 from pathlib import Path
 
 import yaml
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+SRC_ROOT = PROJECT_ROOT / "src"
+if str(SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(SRC_ROOT))
+
+from dar_td3bc.utils.parallel import run_parallel_commands
 
 
 ABLATIONS = {
@@ -34,6 +38,7 @@ def main() -> int:
     parser.add_argument("--device", default=None)
     parser.add_argument("--episodes-per-seed", type=int, default=1)
     parser.add_argument("--max-steps", type=int, default=1000)
+    parser.add_argument("--max-workers", type=int, default=None)
     parser.add_argument("--output-root", default="results/runs")
     parser.add_argument("--config-output", default="results/configs/ablation")
     parser.add_argument("--skip-rollout", action="store_true")
@@ -50,9 +55,10 @@ def main() -> int:
         if args.device is not None:
             config["device"] = args.device
         config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
+
+        train_commands = []
         for seed in args.seeds:
-            run_name = variant
-            _run(
+            train_commands.append(
                 [
                     sys.executable,
                     str(PROJECT_ROOT / "scripts" / "train_dar_td3bc.py"),
@@ -71,18 +77,29 @@ def main() -> int:
                     "--output-root",
                     args.output_root,
                     "--run-name",
-                    run_name,
+                    variant,
                 ]
             )
-            if not args.skip_rollout:
+        return_code = run_parallel_commands(
+            train_commands,
+            max_workers=args.max_workers,
+            label=f"{variant} train seed",
+            cwd=PROJECT_ROOT,
+        )
+        if return_code != 0:
+            return return_code
+
+        if not args.skip_rollout:
+            rollout_commands = []
+            for seed in args.seeds:
                 checkpoint = (
                     PROJECT_ROOT
                     / args.output_root
                     / "dar_td3bc"
-                    / f"{run_name}_seed{seed}"
+                    / f"{variant}_seed{seed}"
                     / "checkpoint_best.pt"
                 )
-                _run(
+                rollout_commands.append(
                     [
                         sys.executable,
                         str(PROJECT_ROOT / "scripts" / "evaluate_rollout.py"),
@@ -104,6 +121,14 @@ def main() -> int:
                         str(checkpoint.parent),
                     ]
                 )
+            return_code = run_parallel_commands(
+                rollout_commands,
+                max_workers=args.max_workers,
+                label=f"{variant} rollout seed",
+                cwd=PROJECT_ROOT,
+            )
+            if return_code != 0:
+                return return_code
     return 0
 
 
@@ -122,19 +147,6 @@ def _deep_update(target: dict, override: dict) -> None:
             _deep_update(child, value)
         else:
             target[key] = value
-
-
-def _run(command: list[str]) -> None:
-    print("Running: " + " ".join(command), flush=True)
-    result = subprocess.run(
-        command,
-        cwd=PROJECT_ROOT,
-        text=True,
-        check=False,
-    )
-    if result.returncode != 0:
-        raise SystemExit(result.returncode)
-
 
 if __name__ == "__main__":
     raise SystemExit(main())
