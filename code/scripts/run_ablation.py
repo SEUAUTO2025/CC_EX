@@ -42,6 +42,7 @@ def main() -> int:
     parser.add_argument("--output-root", default="results/runs")
     parser.add_argument("--config-output", default="results/configs/ablation")
     parser.add_argument("--skip-rollout", action="store_true")
+    parser.add_argument("--resume", action="store_true")
     args = parser.parse_args()
 
     base_config = _load_yaml(PROJECT_ROOT / args.base_config)
@@ -80,6 +81,8 @@ def main() -> int:
                     variant,
                 ]
             )
+            if args.resume:
+                train_commands[-1].append("--resume")
         return_code = run_parallel_commands(
             train_commands,
             max_workers=args.max_workers,

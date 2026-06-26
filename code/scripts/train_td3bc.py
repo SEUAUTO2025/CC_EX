@@ -27,6 +27,7 @@ def main() -> int:
     parser.add_argument("--device", default=None)
     parser.add_argument("--output-root", default="results/runs")
     parser.add_argument("--run-name", default=None)
+    parser.add_argument("--resume", action="store_true")
     args = parser.parse_args()
 
     if args.task != "Pipeline":
@@ -56,6 +57,8 @@ def main() -> int:
                 command.extend(["--run-name", args.run_name])
             if args.device is not None:
                 command.extend(["--device", args.device])
+            if args.resume:
+                command.append("--resume")
             commands.append(command)
         return run_parallel_commands(
             commands,
@@ -68,7 +71,7 @@ def main() -> int:
         config["device"] = args.device
     print(
         f"Starting TD3BC training: seed={args.seed}, steps={args.steps}, "
-        f"device={config.get('device', 'cpu')}"
+        f"device={config.get('device', 'cpu')}, resume={args.resume}"
     )
     run_dir = train_td3bc(
         train_path=args.train,
@@ -78,6 +81,7 @@ def main() -> int:
         steps=args.steps,
         output_root=args.output_root,
         run_name=args.run_name,
+        resume=args.resume,
     )
     print(f"Finished TD3BC training. Run directory: {run_dir}")
     return 0

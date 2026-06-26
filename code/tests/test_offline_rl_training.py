@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import torch
 
 from dar_td3bc.training.offline_rl import train_dar_td3bc, train_td3bc
 
@@ -107,6 +108,65 @@ def test_train_dar_td3bc_writes_checkpoint_and_metrics(tmp_path):
     assert (run_dir / "checkpoint_last.pt").exists()
     assert (run_dir / "metrics_train.csv").exists()
     assert (run_dir / "metrics_validation.csv").exists()
+
+
+def test_dar_checkpoint_contains_optimizer_state_for_resume(tmp_path):
+    train = tmp_path / "train.npz"
+    val = tmp_path / "val.npz"
+    _write_dataset(train)
+    _write_dataset(val)
+
+    run_dir = train_dar_td3bc(
+        train_path=train,
+        val_path=val,
+        config={**_config(), "progress": False},
+        seed=0,
+        steps=2,
+        output_root=tmp_path / "runs",
+        run_name="dar_resume",
+    )
+
+    checkpoint = torch.load(run_dir / "checkpoint_last.pt", map_location="cpu")
+
+    assert checkpoint["step"] == 2
+    assert "optimizers" in checkpoint
+    assert set(checkpoint["optimizers"]) == {
+        "behavior",
+        "representation",
+        "actor",
+        "critic",
+    }
+
+
+def test_train_dar_td3bc_resume_continues_from_last_checkpoint(tmp_path):
+    train = tmp_path / "train.npz"
+    val = tmp_path / "val.npz"
+    _write_dataset(train)
+    _write_dataset(val)
+
+    train_dar_td3bc(
+        train_path=train,
+        val_path=val,
+        config={**_config(), "progress": False},
+        seed=0,
+        steps=2,
+        output_root=tmp_path / "runs",
+        run_name="dar_resume",
+    )
+    run_dir = train_dar_td3bc(
+        train_path=train,
+        val_path=val,
+        config={**_config(), "progress": False},
+        seed=0,
+        steps=4,
+        output_root=tmp_path / "runs",
+        run_name="dar_resume",
+        resume=True,
+    )
+
+    checkpoint = torch.load(run_dir / "checkpoint_last.pt", map_location="cpu")
+
+    assert checkpoint["step"] == 4
 
 
 def test_offline_rl_training_scripts_run_on_synthetic_npz(tmp_path):

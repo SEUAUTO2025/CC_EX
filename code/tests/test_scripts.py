@@ -57,6 +57,13 @@ def test_ablation_script_exposes_parallel_worker_option():
     assert "--max-workers" in result.stdout
 
 
+def test_ablation_script_exposes_resume_option():
+    result = _run_script("run_ablation.py", "--help")
+
+    assert result.returncode == 0, result.stderr
+    assert "--resume" in result.stdout
+
+
 def test_training_scripts_expose_parallel_seed_options():
     for script in (
         "train_behavior_policy.py",
@@ -69,3 +76,11 @@ def test_training_scripts_expose_parallel_seed_options():
         assert result.returncode == 0, result.stderr
         assert "--seeds" in result.stdout
         assert "--max-workers" in result.stdout
+
+
+def test_offline_training_scripts_expose_resume_option():
+    for script in ("train_td3bc.py", "train_dar_td3bc.py"):
+        result = _run_script(script, "--help")
+
+        assert result.returncode == 0, result.stderr
+        assert "--resume" in result.stdout

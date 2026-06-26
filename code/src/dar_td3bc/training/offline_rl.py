@@ -26,7 +26,7 @@ from dar_td3bc.models.policies import (
 )
 from dar_td3bc.models.temporal_encoder import DelayEncoder
 from dar_td3bc.utils.device import resolve_device
-from dar_td3bc.utils.progress import progress_enabled, progress_range
+from dar_td3bc.utils.progress import progress_enabled, progress_iter
 from dar_td3bc.utils.run import append_csv_row, make_run_dir, should_run_interval
 from dar_td3bc.utils.seed import set_global_seed
 
@@ -40,6 +40,7 @@ def train_td3bc(
     steps: int,
     output_root: str | Path,
     run_name: str | None = None,
+    resume: bool = False,
 ) -> Path:
     set_global_seed(seed)
     train_arrays = PipelineArrays.from_npz(train_path)
@@ -71,13 +72,37 @@ def train_td3bc(
     critic_optimizer = torch.optim.Adam(
         critic.parameters(), lr=float(train_cfg.get("critic_lr", 3e-4))
     )
+    optimizers = {"actor": actor_optimizer, "critic": critic_optimizer}
 
     train_batches = FastTransitionBatches(train_arrays, device=device)
     best_val = float("inf")
+    start_step = 1
+    if resume:
+        checkpoint, checkpoint_path = _load_resume_checkpoint(run_dir, device)
+        actor.load_state_dict(checkpoint["actor"])
+        critic.load_state_dict(checkpoint["critic"])
+        target_actor.load_state_dict(checkpoint["target_actor"])
+        target_critic.load_state_dict(checkpoint["target_critic"])
+        _load_optimizer_states(checkpoint, optimizers, device=device)
+        best_val = float(checkpoint.get("val_loss", best_val))
+        start_step = int(checkpoint["step"]) + 1
+        print(
+            f"Resuming TD3BC seed={seed} from {checkpoint_path} "
+            f"at step {start_step - 1}; target steps={steps}",
+            flush=True,
+        )
+        if start_step > steps:
+            print(
+                f"TD3BC seed={seed} already reached step {start_step - 1}; "
+                f"nothing to train.",
+                flush=True,
+            )
+            return run_dir
     last_actor_loss = torch.tensor(0.0, device=device)
-    for step in progress_range(
-        steps,
+    for step in progress_iter(
+        range(start_step, steps + 1),
         desc=f"td3bc seed={seed}",
+        total=max(0, steps - start_step + 1),
         enabled=progress_enabled(config),
     ):
         batch = train_batches.sample(batch_size)
@@ -144,12 +169,37 @@ def train_td3bc(
                         seed,
                         step,
                         val_loss,
+                        optimizers=optimizers,
                     ),
                     run_dir / "checkpoint_best.pt",
                 )
+            torch.save(
+                _td3bc_checkpoint(
+                    actor,
+                    critic,
+                    target_actor,
+                    target_critic,
+                    config,
+                    seed,
+                    step,
+                    best_val,
+                    optimizers=optimizers,
+                ),
+                run_dir / "checkpoint_last.pt",
+            )
 
     torch.save(
-        _td3bc_checkpoint(actor, critic, target_actor, target_critic, config, seed, steps, best_val),
+        _td3bc_checkpoint(
+            actor,
+            critic,
+            target_actor,
+            target_critic,
+            config,
+            seed,
+            steps,
+            best_val,
+            optimizers=optimizers,
+        ),
         run_dir / "checkpoint_last.pt",
     )
     return run_dir
@@ -164,6 +214,7 @@ def train_dar_td3bc(
     steps: int,
     output_root: str | Path,
     run_name: str | None = None,
+    resume: bool = False,
 ) -> Path:
     set_global_seed(seed)
     train_arrays = PipelineArrays.from_npz(train_path)
@@ -222,6 +273,12 @@ def train_dar_td3bc(
     critic_optimizer = torch.optim.Adam(
         critic.parameters(), lr=float(train_cfg.get("critic_lr", 3e-4))
     )
+    optimizers = {
+        "behavior": behavior_optimizer,
+        "representation": representation_optimizer,
+        "actor": actor_optimizer,
+        "critic": critic_optimizer,
+    }
 
     train_batches = FastTransitionBatches(
         train_arrays,
@@ -229,11 +286,39 @@ def train_dar_td3bc(
         device=device,
     )
     best_val = float("inf")
+    start_step = 1
+    if resume:
+        checkpoint, checkpoint_path = _load_resume_checkpoint(run_dir, device)
+        behavior.load_state_dict(checkpoint["behavior"])
+        encoder.load_state_dict(checkpoint["encoder"])
+        prediction_head.load_state_dict(checkpoint["prediction_head"])
+        actor.load_state_dict(checkpoint["actor"])
+        critic.load_state_dict(checkpoint["critic"])
+        target_behavior.load_state_dict(checkpoint["target_behavior"])
+        target_encoder.load_state_dict(checkpoint["target_encoder"])
+        target_actor.load_state_dict(checkpoint["target_actor"])
+        target_critic.load_state_dict(checkpoint["target_critic"])
+        _load_optimizer_states(checkpoint, optimizers, device=device)
+        best_val = float(checkpoint.get("val_loss", best_val))
+        start_step = int(checkpoint["step"]) + 1
+        print(
+            f"Resuming DAR-TD3BC seed={seed} from {checkpoint_path} "
+            f"at step {start_step - 1}; target steps={steps}",
+            flush=True,
+        )
+        if start_step > steps:
+            print(
+                f"DAR-TD3BC seed={seed} already reached step {start_step - 1}; "
+                f"nothing to train.",
+                flush=True,
+            )
+            return run_dir
     last_actor_loss = torch.tensor(0.0, device=device)
     last_gate = torch.tensor(1.0, device=device)
-    for step in progress_range(
-        steps,
+    for step in progress_iter(
+        range(start_step, steps + 1),
         desc=f"dar_td3bc seed={seed}",
+        total=max(0, steps - start_step + 1),
         enabled=progress_enabled(config),
     ):
         batch = train_batches.sample(batch_size)
@@ -392,9 +477,29 @@ def train_dar_td3bc(
                         seed,
                         step,
                         val_loss,
+                        optimizers=optimizers,
                     ),
                     run_dir / "checkpoint_best.pt",
                 )
+            torch.save(
+                _dar_checkpoint(
+                    behavior,
+                    encoder,
+                    prediction_head,
+                    actor,
+                    critic,
+                    target_behavior,
+                    target_encoder,
+                    target_actor,
+                    target_critic,
+                    config,
+                    seed,
+                    step,
+                    best_val,
+                    optimizers=optimizers,
+                ),
+                run_dir / "checkpoint_last.pt",
+            )
 
     torch.save(
         _dar_checkpoint(
@@ -411,6 +516,7 @@ def train_dar_td3bc(
             seed,
             steps,
             best_val,
+            optimizers=optimizers,
         ),
         run_dir / "checkpoint_last.pt",
     )
@@ -470,8 +576,9 @@ def _td3bc_checkpoint(
     seed: int,
     step: int,
     val_loss: float,
+    optimizers: dict[str, torch.optim.Optimizer] | None = None,
 ) -> dict[str, Any]:
-    return {
+    checkpoint = {
         "actor": actor.state_dict(),
         "critic": critic.state_dict(),
         "target_actor": target_actor.state_dict(),
@@ -481,6 +588,9 @@ def _td3bc_checkpoint(
         "step": step,
         "val_loss": val_loss,
     }
+    if optimizers is not None:
+        checkpoint["optimizers"] = _optimizer_state_dicts(optimizers)
+    return checkpoint
 
 
 def _dar_checkpoint(
@@ -497,8 +607,9 @@ def _dar_checkpoint(
     seed: int,
     step: int,
     val_loss: float,
+    optimizers: dict[str, torch.optim.Optimizer] | None = None,
 ) -> dict[str, Any]:
-    return {
+    checkpoint = {
         "behavior": behavior.state_dict(),
         "encoder": encoder.state_dict(),
         "prediction_head": prediction_head.state_dict(),
@@ -513,6 +624,9 @@ def _dar_checkpoint(
         "step": step,
         "val_loss": val_loss,
     }
+    if optimizers is not None:
+        checkpoint["optimizers"] = _optimizer_state_dicts(optimizers)
+    return checkpoint
 
 
 def _write_config(run_dir: Path, config: dict[str, Any], seed: int, steps: int) -> None:
@@ -520,3 +634,53 @@ def _write_config(run_dir: Path, config: dict[str, Any], seed: int, steps: int) 
     (run_dir / "config_resolved.json").write_text(
         json.dumps(payload, indent=2), encoding="utf-8"
     )
+
+
+def _load_resume_checkpoint(run_dir: Path, device: torch.device) -> tuple[dict[str, Any], Path]:
+    for name in ("checkpoint_last.pt", "checkpoint_best.pt"):
+        checkpoint_path = run_dir / name
+        if checkpoint_path.exists():
+            checkpoint = torch.load(checkpoint_path, map_location=device)
+            if "step" not in checkpoint:
+                raise ValueError(f"Resume checkpoint has no step: {checkpoint_path}")
+            return checkpoint, checkpoint_path
+    raise FileNotFoundError(
+        f"No checkpoint_last.pt or checkpoint_best.pt found in {run_dir}"
+    )
+
+
+def _optimizer_state_dicts(
+    optimizers: dict[str, torch.optim.Optimizer],
+) -> dict[str, dict[str, Any]]:
+    return {name: optimizer.state_dict() for name, optimizer in optimizers.items()}
+
+
+def _load_optimizer_states(
+    checkpoint: dict[str, Any],
+    optimizers: dict[str, torch.optim.Optimizer],
+    *,
+    device: torch.device,
+) -> None:
+    states = checkpoint.get("optimizers")
+    if not isinstance(states, dict):
+        print(
+            "Resume checkpoint has no optimizer states; optimizer state starts fresh.",
+            flush=True,
+        )
+        return
+    for name, optimizer in optimizers.items():
+        state = states.get(name)
+        if state is None:
+            print(f"Resume checkpoint missing optimizer state: {name}", flush=True)
+            continue
+        optimizer.load_state_dict(state)
+        _move_optimizer_state_to_device(optimizer, device)
+
+
+def _move_optimizer_state_to_device(
+    optimizer: torch.optim.Optimizer, device: torch.device
+) -> None:
+    for state in optimizer.state.values():
+        for key, value in state.items():
+            if torch.is_tensor(value):
+                state[key] = value.to(device)
