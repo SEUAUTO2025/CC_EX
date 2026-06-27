@@ -98,6 +98,30 @@ def test_aggregate_run_metrics_writes_final_summary(tmp_path):
     assert (tmp_path / "agg" / "main_results.tex").exists()
 
 
+def test_aggregate_run_metrics_can_exclude_method_prefixes(tmp_path):
+    run_root = tmp_path / "runs"
+    for method in ("dar_td3bc", "dar_td3bc_no_gate"):
+        run_dir = run_root / method / "seed_0"
+        run_dir.mkdir(parents=True)
+        (run_dir / "metrics_rollout.csv").write_text(
+            "method,metric,value,provenance,checkpoint,task,seed,episode\n"
+            f"{method},normalized_score,80.0,rollout_neorl2,ckpt,Pipeline,0,0\n",
+            encoding="utf-8",
+        )
+
+    output_dir = aggregate_run_metrics(
+        run_root=run_root,
+        output_dir=tmp_path / "agg",
+        exclude_method_prefixes=["dar_td3bc_no_"],
+    )
+
+    complete = pd.read_csv(output_dir / "complete_results.csv")
+    summary = pd.read_csv(output_dir / "final_summary.csv")
+
+    assert set(complete["method"]) == {"dar_td3bc"}
+    assert set(summary["method"]) == {"dar_td3bc"}
+
+
 def test_aggregate_run_metrics_includes_rollout_metrics_and_paired_tests(tmp_path):
     run_root = tmp_path / "runs"
     for method, values in {

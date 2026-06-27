@@ -16,9 +16,14 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--run-root", default="results/runs")
     parser.add_argument("--output", default="results/aggregated")
+    parser.add_argument("--exclude-method-prefixes", nargs="*", default=[])
     args = parser.parse_args()
 
-    output_dir = aggregate_run_metrics(run_root=args.run_root, output_dir=args.output)
+    output_dir = aggregate_run_metrics(
+        run_root=args.run_root,
+        output_dir=args.output,
+        exclude_method_prefixes=args.exclude_method_prefixes,
+    )
     print(f"Wrote {output_dir / 'final_summary.csv'}")
     return 0
 

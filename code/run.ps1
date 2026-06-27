@@ -4,8 +4,6 @@ Set-Location -LiteralPath $PSScriptRoot
 
 $trainSeeds = @(0, 1, 2, 3, 4)
 $evalSeeds = 0..19
-$steps = 500000
-$ablationMaxWorkers = 1
 $episodesPerSeed = 1
 $device = "cuda"
 
@@ -90,22 +88,7 @@ foreach ($seed in $trainSeeds) {
     Invoke-Python @darEvalArgs
 }
 
-# 2. Run all ablations. run_ablation.py trains every ablation variant and then
-# evaluates rollout for each completed checkpoint.
-$ablationArgs = @(
-    "scripts/run_ablation.py",
-    "--seeds"
-) + $trainSeeds + @(
-    "--eval-seeds"
-) + $evalSeeds + @(
-    "--steps", $steps,
-    "--episodes-per-seed", $episodesPerSeed,
-    "--max-workers", $ablationMaxWorkers,
-    "--device", $device
-)
-Invoke-Python @ablationArgs
-
-# 3. Run robustness for the main TD3BC and DAR-TD3BC checkpoints.
+# 2. Run robustness for the main TD3BC and DAR-TD3BC checkpoints.
 $td3bcCheckpointGlob = Find-FirstCheckpointGlob `
     -Method "td3bc_mlp" `
     -RunNames $td3bcRunNameCandidates
@@ -123,11 +106,11 @@ Invoke-Python scripts/run_robustness.py `
     --episodes-per-seed $episodesPerSeed `
     --device $device
 
-# 4. Aggregate every rollout, robustness, and ablation metric currently under
-# results/runs.
+# 3. Aggregate every rollout and robustness metric currently under results/runs.
 Invoke-Python scripts/aggregate_results.py `
     --run-root results/runs `
-    --output results/aggregated
+    --output results/aggregated `
+    --exclude-method-prefixes dar_td3bc_no_ dar_td3bc_residual_ dar_td3bc_full
 
 Invoke-Python scripts/check_next_operation.py `
     --root . `

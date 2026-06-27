@@ -91,19 +91,6 @@ foreach ($seed in $trainSeeds) {
     Invoke-Python @darEvalArgs
 }
 
-$ablationArgs = @(
-    "scripts/run_ablation.py",
-    "--seeds"
-) + $trainSeeds + @(
-    "--eval-seeds"
-) + $evalSeeds + @(
-    "--steps", $steps,
-    "--episodes-per-seed", $episodesPerSeed,
-    "--max-workers", $maxWorkers,
-    "--device", $device
-)
-Invoke-Python @ablationArgs
-
 $robustnessArgs = @(
     "scripts/run_robustness.py",
     "--checkpoint-glob", "results/runs/*/${runName}_seed*/checkpoint_best.pt",
@@ -116,7 +103,8 @@ Invoke-Python @robustnessArgs
 
 Invoke-Python scripts/aggregate_results.py `
     --run-root results/runs `
-    --output results/aggregated
+    --output results/aggregated `
+    --exclude-method-prefixes dar_td3bc_no_ dar_td3bc_residual_ dar_td3bc_full
 
 Invoke-Python scripts/check_next_operation.py `
     --root . `

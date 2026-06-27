@@ -1,18 +1,25 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
 
-def aggregate_run_metrics(*, run_root: str | Path, output_dir: str | Path) -> Path:
+def aggregate_run_metrics(
+    *,
+    run_root: str | Path,
+    output_dir: str | Path,
+    exclude_method_prefixes: Sequence[str] = (),
+) -> Path:
     run_root = Path(run_root)
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     frames = _read_metric_frames(run_root)
     if frames:
         metrics = pd.concat(frames, ignore_index=True)
+        metrics = _exclude_methods(metrics, exclude_method_prefixes)
         summary = _summarize(metrics)
     else:
         metrics = pd.DataFrame(
@@ -58,6 +65,16 @@ def _read_metric_frames(run_root: Path) -> list[pd.DataFrame]:
             frame["source_file"] = str(path)
             frames.append(frame)
     return frames
+
+
+def _exclude_methods(
+    metrics: pd.DataFrame, exclude_method_prefixes: Sequence[str]
+) -> pd.DataFrame:
+    prefixes = tuple(prefix for prefix in exclude_method_prefixes if prefix)
+    if not prefixes or metrics.empty or "method" not in metrics.columns:
+        return metrics
+    keep = ~metrics["method"].astype(str).str.startswith(prefixes)
+    return metrics.loc[keep].reset_index(drop=True)
 
 
 def _summarize(metrics: pd.DataFrame) -> pd.DataFrame:
