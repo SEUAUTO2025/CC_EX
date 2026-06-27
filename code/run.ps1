@@ -2,7 +2,6 @@ $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 Set-Location -LiteralPath $PSScriptRoot
 
-$trainSeeds = @(0, 1, 2, 3, 4)
 $evalSeeds = 0..19
 $episodesPerSeed = 1
 $device = "cuda"
@@ -25,17 +24,6 @@ function Invoke-Python {
     & python @Arguments
     if ($LASTEXITCODE -ne 0) {
         throw "python $($Arguments -join ' ') failed with exit code $LASTEXITCODE"
-    }
-}
-
-function Require-Path {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string] $Path
-    )
-
-    if (-not (Test-Path -LiteralPath $Path)) {
-        throw "Required path not found: $Path"
     }
 }
 
@@ -70,43 +58,33 @@ Invoke-Python scripts/check_next_operation.py `
     --root . `
     --output NEXT_OPERATIONS_before_postprocess.md
 
-# 1. Evaluate main DAR-TD3BC rollout. TD3BC rollout is assumed complete.
-foreach ($seed in $trainSeeds) {
-    $checkpoint = "results/runs/dar_td3bc/${darRunName}_seed$seed/checkpoint_best.pt"
-    Require-Path $checkpoint
-
-    $darEvalArgs = @(
-        "scripts/evaluate_rollout.py",
-        "--checkpoint", $checkpoint,
-        "--method", "dar_td3bc",
-        "--task", "Pipeline",
-        "--seeds"
-    ) + $evalSeeds + @(
-        "--episodes-per-seed", $episodesPerSeed,
-        "--device", $device
-    )
-    Invoke-Python @darEvalArgs
-}
-
-# 2. Run robustness for the main TD3BC and DAR-TD3BC checkpoints.
+# 1. Run robustness for the main TD3BC and DAR-TD3BC checkpoints.
 $td3bcCheckpointGlob = Find-FirstCheckpointGlob `
     -Method "td3bc_mlp" `
     -RunNames $td3bcRunNameCandidates
 
-Invoke-Python scripts/run_robustness.py `
-    --checkpoint-glob $td3bcCheckpointGlob `
-    --seeds $evalSeeds `
-    --episodes-per-seed $episodesPerSeed `
-    --device $device
+$td3bcRobustnessArgs = @(
+    "scripts/run_robustness.py",
+    "--checkpoint-glob", $td3bcCheckpointGlob,
+    "--seeds"
+) + $evalSeeds + @(
+    "--episodes-per-seed", $episodesPerSeed,
+    "--device", $device
+)
+Invoke-Python @td3bcRobustnessArgs
 
 $darCheckpointGlob = "results/runs/dar_td3bc/${darRunName}_seed*/checkpoint_best.pt"
-Invoke-Python scripts/run_robustness.py `
-    --checkpoint-glob $darCheckpointGlob `
-    --seeds $evalSeeds `
-    --episodes-per-seed $episodesPerSeed `
-    --device $device
+$darRobustnessArgs = @(
+    "scripts/run_robustness.py",
+    "--checkpoint-glob", $darCheckpointGlob,
+    "--seeds"
+) + $evalSeeds + @(
+    "--episodes-per-seed", $episodesPerSeed,
+    "--device", $device
+)
+Invoke-Python @darRobustnessArgs
 
-# 3. Aggregate every rollout and robustness metric currently under results/runs.
+# 2. Aggregate every rollout and robustness metric currently under results/runs.
 Invoke-Python scripts/aggregate_results.py `
     --run-root results/runs `
     --output results/aggregated `
